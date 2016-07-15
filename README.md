@@ -1,4 +1,5 @@
-![nginx 1.9.6](https://img.shields.io/badge/nginx-1.9.6-brightgreen.svg) ![License MIT](https://img.shields.io/badge/license-MIT-blue.svg) [![Build](https://circleci.com/gh/jwilder/nginx-proxy.svg?&style=shield&circle-token=2da3ee844076a47371bd45da81cf27409ca7306a)](https://circleci.com/gh/jwilder/nginx-proxy)
+![nginx 1.9.15](https://img.shields.io/badge/nginx-1.9.15-brightgreen.svg) ![License MIT](https://img.shields.io/badge/license-MIT-blue.svg) [![Build Status](https://travis-ci.org/jwilder/nginx-proxy.svg?branch=master)](https://travis-ci.org/jwilder/nginx-proxy) [![](https://img.shields.io/docker/stars/jwilder/nginx-proxy.svg)](https://hub.docker.com/r/jwilder/nginx-proxy 'DockerHub') [![](https://img.shields.io/docker/pulls/jwilder/nginx-proxy.svg)](https://hub.docker.com/r/jwilder/nginx-proxy 'DockerHub')
+
 
 nginx-proxy sets up a container running nginx and [docker-gen][1].  docker-gen generates reverse proxy configs for nginx and reloads nginx when containers are started and stopped.
 
@@ -18,10 +19,31 @@ The containers being proxied must [expose](https://docs.docker.com/reference/run
 
 Provided your DNS is setup to forward foo.bar.com to the a host running nginx-proxy, the request will be routed to a container with the VIRTUAL_HOST env var set.
 
-### Docker-compose
+### Docker Compose
 
-Currently this does not work with the new v2 syntax of docker-compose (due to not being compatible with the new network overlay see [#304](https://github.com/jwilder/nginx-proxy/issues/304)). It does work when using the old docker-composer syntax.
+```yaml
+version: '2'
+services:
+  nginx-proxy:
+    image: jwilder/nginx-proxy
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
 
+  whoami:
+    image: jwilder/whoami
+    container_name: whoami
+    environment:
+      - VIRTUAL_HOST=whoami.local
+```
+
+```shell
+$ docker-compose up
+$ curl -H "Host: whoami.local" localhost
+I''m 5b129ab83266
+```
 
 ### Multiple Ports
 
@@ -37,6 +59,20 @@ If you need to support multiple virtual hosts for a container, you can separate 
 ### Wildcard Hosts
 
 You can also use wildcards at the beginning and the end of host name, like `*.bar.com` or `foo.bar.*`. Or even a regular expression, which can be very useful in conjunction with a wildcard DNS service like [xip.io](http://xip.io), using `~^foo\.bar\..*\.xip\.io` will match `foo.bar.127.0.0.1.xip.io`, `foo.bar.10.0.2.2.xip.io` and all other given IPs. More information about this topic can be found in the nginx documentation about [`server_names`](http://nginx.org/en/docs/http/server_names.html).
+
+### Multiple Networks
+
+With the addition of [overlay networking](https://docs.docker.com/engine/userguide/networking/get-started-overlay/) in Docker 1.9, your `nginx-proxy` container may need to connect to backend containers on multiple networks. By default, if you don't pass the `--net` flag when your `nginx-proxy` container is created, it will only be attached to the default `bridge` network. This means that it will not be able to connect to containers on networks other than `bridge`.
+
+If you want your `nginx-proxy` container to be attached to a different network, you must pass the `--net=my-network` option in your `docker create` or `docker run` command. At the time of this writing, only a single network can be specified at container creation time. To attach to other networks, you can use the `docker network connect` command after your container is created:
+
+```console
+$ docker run -d -p 80:80 -v /var/run/docker.sock:/tmp/docker.sock:ro \
+    --name my-nginx-proxy --net my-network jwilder/nginx-proxy
+$ docker network connect my-other-network my-nginx-proxy
+```
+
+In this example, the `my-nginx-proxy` container will be connected to `my-network` and `my-other-network` and will be able to proxy to other containers attached to those networks.
 
 ### SSL Backends
 
@@ -69,7 +105,7 @@ Then start the docker-gen container with the shared volume and template:
 $ docker run --volumes-from nginx \
     -v /var/run/docker.sock:/tmp/docker.sock:ro \
     -v $(pwd):/etc/docker-gen/templates \
-    -t jwilder/docker-gen -notify-sighup nginx -watch -only-exposed /etc/docker-gen/templates/nginx.tmpl /etc/nginx/conf.d/default.conf
+    -t jwilder/docker-gen -notify-sighup nginx -watch /etc/docker-gen/templates/nginx.tmpl /etc/nginx/conf.d/default.conf
 ```
 
 Finally, start your containers with `VIRTUAL_HOST` environment variables.
@@ -115,7 +151,7 @@ should provide compatibility with clients back to Firefox 1, Chrome 1, IE 7, Ope
 Windows XP IE8, Android 2.3, Java 7.  The configuration also enables HSTS, and SSL
 session caches.
 
-The behavior for the proxy when port 80 and 443 are exposed is as follows:
+The default behavior for the proxy when port 80 and 443 are exposed is as follows:
 
 * If a container has a usable cert, port 80 will redirect to 443 for that container so that HTTPS
 is always preferred when available.
@@ -125,6 +161,15 @@ Note that in the latter case, a browser may get an connection error as no certif
 to establish a connection.  A self-signed or generic cert named `default.crt` and `default.key`
 will allow a client browser to make a SSL connection (likely w/ a warning) and subsequently receive
 a 503.
+
+To serve traffic in both SSL and non-SSL modes without redirecting to SSL, you can include the
+environment variable `HTTPS_METHOD=noredirect` (the default is `HTTPS_METHOD=redirect`).  You can also
+disable the non-SSL site entirely with `HTTPS_METHOD=nohttp`. `HTTPS_METHOD` must be specified
+on each container for which you want to override the default behavior.  If `HTTPS_METHOD=noredirect` is
+used, Strict Transport Security (HSTS) is disabled to prevent HTTPS users from being redirected by the
+client.  If you cannot get to the HTTP site after changing this setting, your browser has probably cached
+the HSTS policy and is automatically redirecting you back to HTTPS.  You will need to clear your browser's
+HSTS cache or use an incognito window / different browser.
 
 ### Basic Authentication Support
 
@@ -232,4 +277,3 @@ Before submitting pull requests or issues, please check github to make sure an e
 To run tests, you'll need to install [bats 0.4.0](https://github.com/sstephenson/bats).
 
     make test
-
